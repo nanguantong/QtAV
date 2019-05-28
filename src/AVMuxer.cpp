@@ -458,6 +458,22 @@ bool AVMuxer::close()
             d->format_ctx->pb = 0;
         }
     }
+// added by nanguantong start
+    if (d->audio_streams.size() > 0) {
+        AVStream *s = d->format_ctx->streams[d->audio_streams[0]];
+        if (s->codec) {
+            s->codec->extradata = NULL;
+            s->codec->extradata_size = 0;
+        }
+    }
+    if (d->video_streams.size() > 0) {
+        AVStream *s = d->format_ctx->streams[d->video_streams[0]];
+        if (s->codec) {
+            s->codec->extradata = NULL;
+            s->codec->extradata_size = 0;
+        }
+    }
+// added by nanguantong end
     avformat_free_context(d->format_ctx);
     d->format_ctx = 0;
     d->audio_streams.clear();
@@ -479,7 +495,11 @@ bool AVMuxer::writeAudio(const QtAV::Packet& packet)
     AVStream *s = d->format_ctx->streams[pkt->stream_index];
     // stream.time_base is set in avformat_write_header
     av_packet_rescale_ts(pkt, kTB, s->time_base);
-    av_interleaved_write_frame(d->format_ctx, pkt);
+    int ret = av_interleaved_write_frame(d->format_ctx, pkt);
+    if (ret != 0)
+        qDebug() << "audio write frame ret: " << ret;
+    if (pkt->duration < 0)
+        qDebug() << "audio write frame duration < 0";
 
     d->started = true;
     return true;
@@ -493,7 +513,11 @@ bool AVMuxer::writeVideo(const QtAV::Packet& packet)
     // stream.time_base is set in avformat_write_header
     av_packet_rescale_ts(pkt, kTB, s->time_base);
     //av_write_frame
-    av_interleaved_write_frame(d->format_ctx, pkt);
+    int ret = av_interleaved_write_frame(d->format_ctx, pkt);
+    if (ret != 0)
+        qDebug() << "video write frame ret: " << ret;
+    if (pkt->duration < 0)
+        qDebug() << "video write frame duration < 0";
 #if 0
     qDebug("mux packet.pts: %.3f dts:%.3f duration: %.3f, avpkt.pts: %lld,dts:%lld,duration:%lld"
            , packet.pts, packet.dts, packet.duration
