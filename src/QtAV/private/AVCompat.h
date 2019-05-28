@@ -59,7 +59,6 @@ extern "C"
 #include <libavutil/parseutils.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/avstring.h>
-#include <libavfilter/version.h>
 
 #define AVCODEC_STATIC_REGISTER FFMPEG_MODULE_CHECK(LIBAVCODEC, 58, 10, 100)
 #define AVFORMAT_STATIC_REGISTER FFMPEG_MODULE_CHECK(LIBAVFORMAT, 58, 9, 100)
@@ -83,6 +82,7 @@ extern "C"
 #endif //QTAV_HAVE(AVRESAMPLE)
 
 #if QTAV_HAVE(AVFILTER)
+#include <libavfilter/version.h>
 #if LIBAVFILTER_VERSION_INT < AV_VERSION_INT(3,8,0)
 #include <libavfilter/avfiltergraph.h> /*code is here for old version*/
 #else

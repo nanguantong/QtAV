@@ -53,6 +53,7 @@ class AudioEncoderFFmpegPrivate Q_DECL_FINAL: public AudioEncoderPrivate
 public:
     AudioEncoderFFmpegPrivate()
         : AudioEncoderPrivate()
+        , nb_encoded(0)
     {
         avcodec_register_all();
         // NULL: codec-specific defaults won't be initialized, which may result in suboptimal default settings (this is important mainly for encoders, e.g. libx264).
@@ -61,11 +62,13 @@ public:
     bool open() Q_DECL_OVERRIDE;
     bool close() Q_DECL_OVERRIDE;
 
+    qint64 nb_encoded;
     QByteArray buffer;
 };
 
 bool AudioEncoderFFmpegPrivate::open()
 {
+    nb_encoded = 0LL;
     if (codec_name.isEmpty()) {
         // copy ctx from muxer by copyAVCodecContext
         AVCodec *codec = avcodec_find_encoder(avctx->codec_id);
@@ -189,7 +192,20 @@ bool AudioEncoderFFmpeg::encode(const AudioFrame &frame)
         f->nb_samples = d.frame_size;
         /// f->quality = d.avctx->global_quality; //TODO
         // TODO: record last pts. mpv compute pts internally and also use playback time
-        f->pts = int64_t(frame.timestamp()*fmt.sampleRate()); // TODO
+// added by nanguantong start
+        switch (timestampMode()) {
+        case TimestampCopy:
+            f->pts = int64_t(frame.timestamp()*fmt.sampleRate()); // TODO
+            break;
+        case TimestampMonotonic:
+            f->pts = (d.nb_encoded+1)*f->nb_samples;
+            break;
+        default:
+            break;
+        }
+// added by nanguantong end
+        //f->pts = int64_t(frame.timestamp()*fmt.sampleRate()); // TODO
+
         // pts is set in muxer
         const int nb_planes = frame.planeCount();
         // bytes between 2 samples on a plane. TODO: add to AudioFormat? what about bytesPerFrame?
@@ -211,6 +227,7 @@ bool AudioEncoderFFmpeg::encode(const AudioFrame &frame)
         //av_packet_unref(&pkt); //FIXME
         return false; //false
     }
+    d.nb_encoded++;
     if (!got_packet) {
         qWarning("no packet got");
         d.packet = Packet();

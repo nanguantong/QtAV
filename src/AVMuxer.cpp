@@ -151,6 +151,19 @@ bool AVMuxer::Private::prepareStreams()
             // Set avg_frame_rate based on encoder frame_rate
             s->avg_frame_rate = av_d2q(venc->frameRate(), venc->frameRate()*1001.0+2);
 
+// added by nanguantong start
+            AVCodecContext *avctx = (AVCodecContext *) venc->codecContext();
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(56,5,100)
+            c->initial_padding = avctx->initial_padding;
+#else
+            c->delay = avctx->delay;
+#endif
+            if (avctx->extradata_size) {
+                c->extradata = avctx->extradata;
+                c->extradata_size = avctx->extradata_size;
+            }
+// added by nanguantong end
+
             video_streams.push_back(s->id);
         }
     }

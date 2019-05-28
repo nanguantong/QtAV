@@ -51,6 +51,11 @@ int main(int argc, char *argv[])
     if (idx > 0)
         cv = a.arguments().at(idx + 1);
 
+    QString ca = QString::fromLatin1("libfdk_aac");
+    idx = a.arguments().indexOf(QLatin1String("-c:a"));
+    if (idx > 0)
+        ca = a.arguments().at(idx + 1);
+
     QString fmt;
     idx = a.arguments().indexOf(QLatin1String("-f"));
     if (idx > 0)
@@ -87,6 +92,20 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    int astream = demux.audioStream();
+    AudioEncoder *aenc = AudioEncoder::create("FFmpeg");
+    aenc->setCodecName(ca);
+    AudioFormat aformat;
+    aformat.setChannels(2);
+    aformat.setSampleRate(48000);
+    aenc->setAudioFormat(aformat);
+    if (!aenc->isOpen()) {
+        if (!aenc->open()) {
+            qWarning("failed to open audio encoder");
+            return 1;
+        }
+    }
+
     dec->setCodecContext(demux.videoCodecContext());
     dec->open();
     QElapsedTimer timer;
@@ -97,7 +116,23 @@ int main(int argc, char *argv[])
     venc->setCodecName(cv);
     //venc->setCodecName("png");
     venc->setBitRate(1024*1024);
+    venc->setFrameRate(25);
     //venc->setPixelFormat(VideoFormat::Format_RGBA32);
+    QVariantHash avfopt0, vencopt;
+    avfopt0[QString::fromLatin1("flags")] = 1 << 22; //AV_CODEC_FLAG_GLOBAL_HEADER;
+    vencopt[QString::fromLatin1("avcodec")] = avfopt0;
+    venc->setOptions(vencopt);
+
+    AudioDecoder *adec = AudioDecoder::create(decName.toLatin1().constData());
+    if (!adec) {
+        qWarning("Can not find audio decoder: %s", decName.toUtf8().constData());
+        return 1;
+    }
+    if (!decopt.isEmpty())
+        adec->setOptions(decopt);
+    adec->setCodecContext(demux.audioCodecContext());
+    adec->open();
+
     AVMuxer mux;
     //mux.setMedia("/Users/wangbin/Movies/m3u8/bbb%05d.ts");
     //mux.setMedia("/Users/wangbin/Movies/img2/bbb%05d.png");
@@ -109,47 +144,65 @@ int main(int argc, char *argv[])
     avfopt[QString::fromLatin1("segment_format")] = QString::fromLatin1("mpegts");
     muxopt[QString::fromLatin1("avformat")] = avfopt;
     qreal fps = 0;
-    while (!demux.atEnd()) {
+    int i = 0;
+    while (i++ < 1000 && !demux.atEnd()) {
         if (!demux.readFrame())
             continue;
         if (demux.stream() != vstream)
             continue;
+
         const Packet pkt = demux.packet();
-        if (dec->decode(pkt)) {
-            VideoFrame frame = dec->frame(); // why is faster to call frame() for hwdec? no frame() is very slow for VDA
-            if (!frame)
-                continue;
-            if (!venc->isOpen()) {
-                venc->setWidth(frame.width());
-                venc->setHeight(frame.height());
-                if (!venc->open()) {
-                    qWarning("failed to open encoder");
-                    return 1;
+
+        if (demux.stream() == vstream) {
+            if (dec->decode(pkt)) {
+                VideoFrame frame = dec->frame(); // why is faster to call frame() for hwdec? no frame() is very slow for VDA
+                if (!frame)
+                    continue;
+                if (!venc->isOpen()) {
+                    venc->setWidth(frame.width());
+                    venc->setHeight(frame.height());
+                    if (!venc->open()) {
+                        qWarning("failed to open encoder");
+                        return 1;
+                    }
+                }
+                if (!mux.isOpen()) {
+                    mux.copyProperties(aenc);
+                    mux.copyProperties(venc);
+                    mux.setOptions(muxopt);
+                    if (!fmt.isEmpty())
+                        mux.setFormat(fmt);
+                    //mux.setFormat("segment");
+                   // mux.setFormat("image2");
+                    if (!mux.open()) {
+                        qWarning("failed to open muxer");
+                        return 1;
+                    }
+                    //mux.setOptions(muxopt);
+                }
+                if (frame.pixelFormat() != venc->pixelFormat())
+                    frame = frame.to(venc->pixelFormat());
+                if (venc->encode(frame)) {
+                    Packet pkt(venc->encoded());
+                    mux.writeVideo(pkt);
+                    count++;
+                    if (count%20 == 0) {
+                        fps = qreal(count*1000)/qreal(timer.elapsed());
+                    }
+                    printf("decode count: %d, fps: %.2f frame size: %dx%d %d\r", count, fps, frame.width(), frame.height(), frame.data().size());fflush(0);
                 }
             }
-            if (!mux.isOpen()) {
-                mux.copyProperties(venc);
-                mux.setOptions(muxopt);
-                if (!fmt.isEmpty())
-                    mux.setFormat(fmt);
-                //mux.setFormat("segment");
-               // mux.setFormat("image2");
-                if (!mux.open()) {
-                    qWarning("failed to open muxer");
-                    return 1;
+        }
+        else if (demux.stream() == astream) {
+            if (adec->decode(pkt)) {
+                AudioFrame frame = adec->frame(); // why is faster to call frame() for hwdec? no frame() is very slow for VDA
+                if (!frame)
+                    continue;
+
+                if (aenc->encode(frame)) {
+                    Packet pkt(aenc->encoded());
+                    mux.writeAudio(pkt);
                 }
-                //mux.setOptions(muxopt);
-            }
-            if (frame.pixelFormat() != venc->pixelFormat())
-                frame = frame.to(venc->pixelFormat());
-            if (venc->encode(frame)) {
-                Packet pkt(venc->encoded());
-                mux.writeVideo(pkt);
-                count++;
-                if (count%20 == 0) {
-                    fps = qreal(count*1000)/qreal(timer.elapsed());
-                }
-                printf("decode count: %d, fps: %.2f frame size: %dx%d %d\r", count, fps, frame.width(), frame.height(), frame.data().size());fflush(0);
             }
         }
     }
@@ -162,6 +215,7 @@ int main(int argc, char *argv[])
     qint64 elapsed = timer.elapsed();
     int msec = elapsed/1000LL+1;
     qDebug("decoded frames: %d, time: %d, average speed: %d", count, msec, count/msec);
+    aenc->close();
     venc->close();
     mux.close();
     return 0;
